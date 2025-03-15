@@ -3,7 +3,7 @@ mod bounds;
 mod sphere;
 
 pub use convex_hull::ConvexHull;
-pub use bounds::BoundingBox;
+pub use bounds::*;
 pub use sphere::Sphere;
 
 

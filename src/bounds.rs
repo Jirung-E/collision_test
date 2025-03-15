@@ -62,51 +62,12 @@ impl BoundingBox {
         x_overlap && y_overlap && z_overlap
     }
 
-    // OBB를 축에 투영하고 투영 간격(최소, 최대)을 반환하는 메서드
-    fn project_onto_axis(&self, axis: &glam::Vec3A) -> (f32, f32) {
-        let vertices = self.get_vertices();
-        
-        //각 정점을 축에 투영하는 dot product 계산
-        // let projections: Vec<f32> = vertices.iter().map(|v| {
-        //     axis.dot(*v)
-        // }).collect();
-        // Heap 할당을 피하기 위해 배열로 변경
-        let projections: [f32; 8] = [
-            axis.dot(vertices[0]),
-            axis.dot(vertices[1]),
-            axis.dot(vertices[2]),
-            axis.dot(vertices[3]),
-            axis.dot(vertices[4]),
-            axis.dot(vertices[5]),
-            axis.dot(vertices[6]),
-            axis.dot(vertices[7]),
-        ];
-
-        let min_proj = *projections.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-        let max_proj = *projections.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-
-        (min_proj, max_proj)
-    }
-
-    // 두 OBB가 주어진 축에서 겹치는지 확인
-    fn overlaps_on_axis(&self, other: &BoundingBox, axis: &glam::Vec3A) -> bool {
-        let (min_a, max_a) = self.project_onto_axis(axis);
-        let (min_b, max_b) = other.project_onto_axis(axis);
-
-        // 축에서 투영이 겹치는지 확인
-        max_a >= min_b && max_b >= min_a
-    }
-
     // SAT 를 이용한 OBB collision detection
     pub fn obb_collision(&self, other: &BoundingBox) -> bool {
         let self_axes = self.get_axes();
         let other_axes = other.get_axes();
 
         // cross products > vector
-        // let cross_products: Vec<glam::Vec3A> = self_axes.iter().flat_map(|&a1| {
-        //     other_axes.iter().map(move |&a2| a1.cross(a2)) // Cross products
-        // }).collect();
-        // Heap 할당을 피하기 위해 배열로 변경
         let cross_products: [glam::Vec3A; 9] = [
             self_axes[0].cross(other_axes[0]),
             self_axes[0].cross(other_axes[1]),
@@ -124,8 +85,11 @@ impl BoundingBox {
             .chain(other_axes.iter())       // 양 OBB의 지역 축
             .chain(cross_products.iter());  // Cross product 축
 
+        let vbox1 = VertexBox::from(self);
+        let vbox2 = VertexBox::from(other);
+
         for axis in axes_to_test {
-            if !self.overlaps_on_axis(other, axis) {
+            if !vbox1.overlaps_on_axis(&vbox2, axis) {
                 return false; // if 분리된 축이 존재 = 충돌 없음
             }
         }
@@ -163,5 +127,53 @@ impl BoundingBox {
         } else {
             vertices.map(|v| center + v)
         }
+    }
+}
+
+
+pub struct VertexBox {
+    vertices: [glam::Vec3A; 8],
+}
+
+impl From<&BoundingBox> for VertexBox {
+    fn from(boundingbox: &BoundingBox) -> Self {
+        Self {
+            vertices: boundingbox.get_vertices(),
+        }
+    }
+}
+
+impl VertexBox {
+    // OBB를 축에 투영하고 투영 간격(최소, 최대)을 반환하는 메서드
+    fn project_onto_axis(&self, axis: &glam::Vec3A) -> (f32, f32) {
+        //각 정점을 축에 투영하는 dot product 계산
+        let projections: [f32; 8] = [
+            axis.dot(self.vertices[0]),
+            axis.dot(self.vertices[1]),
+            axis.dot(self.vertices[2]),
+            axis.dot(self.vertices[3]),
+            axis.dot(self.vertices[4]),
+            axis.dot(self.vertices[5]),
+            axis.dot(self.vertices[6]),
+            axis.dot(self.vertices[7]),
+        ];
+
+        let min_proj = *projections.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let max_proj = *projections.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+        (min_proj, max_proj)
+    }
+
+    // 두 OBB가 주어진 축에서 겹치는지 확인
+    fn overlaps_on_axis(&self, other: &VertexBox, axis: &glam::Vec3A) -> bool {
+        let (min_a, max_a) = self.project_onto_axis(axis);
+        let (min_b, max_b) = other.project_onto_axis(axis);
+
+        // 축에서 투영이 겹치는지 확인
+        max_a >= min_b && max_b >= min_a
+    }
+
+    pub fn get_vertices(&self) -> &[glam::Vec3A; 8] {
+        &self.vertices
     }
 }
