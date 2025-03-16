@@ -1,3 +1,6 @@
+use crate::CollisionDetails;
+
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoundingBox {
     pub center: glam::Vec3,
@@ -62,6 +65,59 @@ impl BoundingBox {
         x_overlap && y_overlap && z_overlap
     }
 
+    // AABB collision detection + 충돌 상세 정보 반환
+    pub fn aabb_collision_details(&self, other: &BoundingBox) -> Option<CollisionDetails> {
+        let min_a = self.center - self.extents;
+        let max_a = self.center + self.extents;
+        let min_b = other.center - other.extents;
+        let max_b = other.center + other.extents;
+
+        let overlap_min = min_a.max(min_b);
+        let overlap_max = max_a.min(max_b);
+
+        let mut min_penetration = f32::MAX;
+        let mut min_element = 0;
+
+        for i in 0..3 {
+            let penetration = if overlap_min[i] <= overlap_max[i] {
+                // 겹쳤을 경우, 겹침의 깊이를 계산
+                let mid_a = (max_a[i] + min_a[i]) * 0.5;
+                let mid_b = (max_b[i] + min_b[i]) * 0.5;
+                if mid_a < mid_b {
+                    // self가 other보다 왼쪽에 있을 때
+                    overlap_min[i] - overlap_max[i]
+                } else {
+                    // self가 other보다 오른쪽에 있을 때
+                    overlap_max[i] - overlap_min[i]
+                }
+            } else {
+                // 겹치지 않는 경우
+                return None;
+            };
+
+            if penetration.abs() < min_penetration.abs() {
+                min_penetration = penetration;
+                min_element = i;
+            }
+        }
+
+        let mut collision_normal = match min_element {
+            0 => glam::Vec3A::X,
+            1 => glam::Vec3A::Y,
+            2 => glam::Vec3A::Z,
+            _ => glam::Vec3A::ZERO,
+        };
+
+        if min_penetration == 0.0 {
+            collision_normal = glam::Vec3A::ZERO;
+        }
+
+        Some(CollisionDetails {
+            normal: collision_normal,
+            penetration: min_penetration,
+        })
+    }
+
     // SAT 를 이용한 OBB collision detection
     pub fn obb_collision(&self, other: &BoundingBox) -> bool {
         let self_axes = self.get_axes();
@@ -83,7 +139,8 @@ impl BoundingBox {
         // 모든 축 확인
         let axes_to_test = self_axes.iter()
             .chain(other_axes.iter())       // 양 OBB의 지역 축
-            .chain(cross_products.iter());  // Cross product 축
+            .chain(cross_products.iter())   // Cross product 축
+            .filter(|&axis| !axis.is_nan() && *axis != glam::Vec3A::ZERO); // NaN, Zero 제외
 
         let vbox1 = VertexBox::from(self);
         let vbox2 = VertexBox::from(other);
@@ -95,6 +152,58 @@ impl BoundingBox {
         }
 
         true // 분리된 축 없음 = 충돌
+    }
+    
+    // SAT 를 이용한 OBB collision detection + 충돌 상세 정보 반환
+    pub fn obb_collision_details(&self, other: &BoundingBox) -> Option<CollisionDetails> {
+        let self_axes = self.get_axes();
+        let other_axes = other.get_axes();
+
+        // cross products > vector
+        let cross_products: [glam::Vec3A; 9] = [
+            self_axes[0].cross(other_axes[0]),
+            self_axes[0].cross(other_axes[1]),
+            self_axes[0].cross(other_axes[2]),
+            self_axes[1].cross(other_axes[0]),
+            self_axes[1].cross(other_axes[1]),
+            self_axes[1].cross(other_axes[2]),
+            self_axes[2].cross(other_axes[0]),
+            self_axes[2].cross(other_axes[1]),
+            self_axes[2].cross(other_axes[2]),
+        ];
+
+        // 모든 축 확인
+        let axes_to_test = self_axes.iter()
+            .chain(other_axes.iter())       // 양 OBB의 지역 축
+            .chain(cross_products.iter())   // Cross product 축
+            .filter(|&axis| !axis.is_nan() && *axis != glam::Vec3A::ZERO); // NaN, Zero 제외
+
+        let vbox1 = VertexBox::from(self);
+        let vbox2 = VertexBox::from(other);
+
+        let mut min_penetration = f32::MAX;
+        let mut collision_normal = glam::Vec3A::ZERO;
+
+        for axis in axes_to_test {
+            match vbox1.overlaps_length_on_axis(&vbox2, axis) {
+                Some(penetration) => {
+                    if penetration.abs() < min_penetration.abs() {
+                        min_penetration = penetration;
+                        collision_normal = axis.normalize();  // 최소 침투가 있는 축을 충돌 노말로 설정
+                    }
+                }
+                None => return None, // 분리된 축이 존재 => 충돌 없음
+            }
+        }
+
+        if min_penetration != f32::MAX {
+            Some(CollisionDetails {
+                normal: collision_normal,
+                penetration: min_penetration,
+            })
+        } else {
+            None // 침투가 없으면 충돌 없음
+        }
     }
 
     // OBB의 지역 축 가져오기 (회전 행렬의 열)
@@ -171,6 +280,31 @@ impl VertexBox {
 
         // 축에서 투영이 겹치는지 확인
         max_a >= min_b && max_b >= min_a
+    }
+
+    // 두 OBB가 주어진 축에서 겹치는지 확인
+    fn overlaps_length_on_axis(&self, other: &VertexBox, axis: &glam::Vec3A) -> Option<f32> {
+        let (min_a, max_a) = self.project_onto_axis(axis);
+        let (min_b, max_b) = other.project_onto_axis(axis);
+
+        let overlap_min = min_a.max(min_b);
+        let overlap_max = max_a.min(max_b);
+        
+        if overlap_min <= overlap_max {
+            // 겹쳤을 경우, 겹침의 깊이를 반환
+            let mid_a = (max_a + min_a) * 0.5;
+            let mid_b = (max_b + min_b) * 0.5;
+            if mid_a < mid_b {
+                // self가 other보다 왼쪽에 있을 때
+                Some(overlap_min - overlap_max)
+            } else {
+                // self가 other보다 오른쪽에 있을 때
+                Some(overlap_max - overlap_min)
+            }
+        } else {
+            // 겹치지 않는 경우
+            None
+        }
     }
 
     pub fn get_vertices(&self) -> &[glam::Vec3A; 8] {

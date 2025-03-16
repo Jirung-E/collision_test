@@ -1,5 +1,6 @@
 use std::collections::BinaryHeap;
-use super::{BoundingBox, VertexBox, Sphere, CollisionDetails};
+use crate::{BoundingBox, VertexBox, Sphere};
+use super::CollisionDetails;
 
 
 pub trait ConvexHull {
